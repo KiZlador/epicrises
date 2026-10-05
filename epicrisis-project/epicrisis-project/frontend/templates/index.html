@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Разбор эпикризов</title>
+    <link rel="stylesheet" href="{{ static_url('style.css') }}">
+</head>
+<body>
+<header class="app-header">
+  <div class="brand">
+    <div class="brand-text">
+      <h1>Разбор эпикризов</h1>
+    </div>
+    <img class="brand-logo"
+         src="{{ static_url('logo.svg') }}"
+         alt="Эмблема">
+  </div>
+</header>
+
+    
+    <input type="file" id="file-input" accept=".md,.zip" multiple hidden>
+
+    <div class="upload-row">
+        <button class="btn btn-primary" id="upload-btn">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 3h11l3 3v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"
+                  fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linejoin="round"/>
+            <path d="M8 3v6h7V3" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linejoin="round"/>
+            <rect x="8" y="14" width="8" height="8" rx="1"
+                  fill="none" stroke="currentColor" stroke-width="2"/>
+          </svg>
+          Загрузить
+        </button>
+        <span id="upload-status"></span>   
+        <span id="upload-message"></span>  
+    </div>
+
+
+    <p id="process-status" role="status" aria-live="polite" hidden></p>
+    <div class="workspace">
+        <div class="left">
+            <div class="toolbar">
+                <button class="btn btn-dark" id="clear-btn">
+                  <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor"
+                          stroke-width="2" stroke-linecap="round"/>
+                  </svg>
+                  Удалить всё
+                </button>
+                <button class="btn btn-primary" id="process-btn">
+                  <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 12l4 4L19 6" fill="none" stroke="currentColor"
+                          stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                  Обработать
+                </button>
+            </div>
+            <ul id="file-list"></ul>
+        </div>
+
+        <div class="right">
+            <div id="result-title"></div>
+            <p id="output-message" hidden></p>
+
+            
+            <div class="table-wrap" id="table-wrap" hidden>
+                <table id="result-table">
+                    <thead>
+                        <tr><th>Группа</th><th>Признак</th><th>Значение</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            
+            <div class="save-bar" id="save-bar" hidden>
+                <label>Что сохранить:
+                    <select id="save-scope">
+                        <option value="one">Выбранный файл</option>
+                        <option value="all">Весь набор</option>
+                    </select>
+                </label>
+                <label>Формат:
+                    <select id="save-format">
+                        <option value="xlsx">Excel (.xlsx)</option>
+                        <option value="json">JSON (.json)</option>
+                    </select>
+                </label>
+                <button class="btn btn-primary" id="save-btn">
+                  <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16" fill="none" stroke="currentColor"
+                          stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                  Сохранить
+                </button>
+                <span id="save-message"></span>
+            </div>
+        </div>
+
+        
+        <div class="source">
+            <div id="source-title">Исходный текст</div>
+            <p class="source-hint">Наведите курсор на значение с цитатой, чтобы подсветить исходный фрагмент. Нажмите, чтобы закрепить его. Для неподтверждённых значений подсветки нет.</p>
+            <pre id="source-view" class="md-view"></pre>
+        </div>
+    </div>
+
+    <script src="{{ static_url('upload.js') }}"></script>
+    <script src="{{ static_url('hints.js') }}"></script>
+    <script src="{{ static_url('source.js') }}"></script>
+    <script src="{{ static_url('files.js') }}"></script>
+    <script src="{{ static_url('save.js') }}"></script>
+</body>
+</html>
