@@ -1,4 +1,4 @@
-(function () {
+export function createSave(api) {
     const bar = document.getElementById("save-bar");
     const scope = document.getElementById("save-scope");
     const format = document.getElementById("save-format");
@@ -6,8 +6,8 @@
     const message = document.getElementById("save-message");
     const oneOption = scope.querySelector('option[value="one"]');
     const jsonOption = format.querySelector('option[value="json"]');
-
     let state = { selected: null, selectedProcessed: false, processedCount: 0 };
+    let downloading = false;
 
     function updateFormatLabel() {
         jsonOption.textContent = scope.value === "all"
@@ -16,11 +16,11 @@
     }
     scope.addEventListener("change", updateFormatLabel);
 
-    document.addEventListener("files:state", (event) => {
+    function update(next) {
         const previous = state.selected;
-        state = event.detail;
-
+        state = next;
         bar.hidden = state.processedCount === 0;
+        button.disabled = downloading || state.processedCount === 0;
         oneOption.disabled = !state.selectedProcessed;
         oneOption.textContent = state.selectedProcessed
             ? `Выбранный файл: ${state.selected}`
@@ -29,42 +29,45 @@
         if (!state.selectedProcessed) {
             scope.value = "all";
         } else if (state.selected !== previous) {
-            scope.value = "one"; // выбрали другой файл — по умолчанию сохраняем его
+            scope.value = "one";
         }
         updateFormatLabel();
-    });
+    }
 
     button.addEventListener("click", async () => {
-        const params = new URLSearchParams({ scope: scope.value, format: format.value });
-        let filename = "results";
-        if (scope.value === "one") {
-            params.set("name", state.selected);
-            filename = state.selected.replace(/\.md$/i, "");
-        }
-        const zipped = scope.value === "all" && format.value === "json";
-        filename += "." + (zipped ? "zip" : format.value);
-
-        button.disabled = true;
+        if (downloading || !state.processedCount) return;
+        if (scope.value === "one" && !state.selectedProcessed) return;
+        const params = { scope: scope.value, format: format.value };
+        if (params.scope === "one") params.name = state.selected;
+        downloading = true;
+        update(state);
         message.textContent = "";
         try {
-            const response = await fetch("/download?" + params);
-            if (!response.ok) {
-                const data = await response.json();
-                message.textContent = data.error || "Не удалось сохранить";
-                return;
-            }
-            const url = URL.createObjectURL(await response.blob());
-            const link = document.createElement("a");
-            link.href = url;
-            link.download = filename;
-            document.body.appendChild(link);
-            link.click();
-            link.remove();
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
-        } catch (err) {
-            message.textContent = "Не удалось связаться с сервером";
+            saveBlob(await api.download(params), downloadName(params));
+        } catch (error) {
+            message.textContent = error.message;
         } finally {
-            button.disabled = false;
+            downloading = false;
+            update(state);
         }
     });
-})();
+
+    return { update };
+}
+
+export function downloadName({ scope, format, name }) {
+    const basename = scope === "one" ? name.replace(/\.md$/i, "") : "results";
+    const extension = scope === "all" && format === "json" ? "zip" : format;
+    return `${basename}.${extension}`;
+}
+
+function saveBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

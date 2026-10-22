@@ -13,15 +13,15 @@ from unittest.mock import Mock, patch
 
 from openpyxl import load_workbook
 
-import pipeline as technical_cli
-from backend.app import create_app
-from backend.exports import build_xlsx
-from domain.config import ROOT, Settings
-from domain.schema import GROUPS
-from domain.validation import validate_result
-from extraction.evidence import browser_citations
-from extraction.llm import LocalModel
-from extraction.pipeline import Pipeline
+import process_documents as technical_cli
+from epicrises.exporting.formats import build_xlsx
+from epicrises.processing import DocumentProcessor
+from epicrises.processing.inference.local_model import LocalModel
+from epicrises.shared.field_schema import GROUPS
+from epicrises.shared.field_validation import validate_result
+from epicrises.shared.settings import ROOT, Settings
+from epicrises.web import create_app
+from epicrises.web.citation_view import browser_citations
 
 DOC = """ЭПИКРИЗ
 Поступил 01.01.2024. Выписан 04.01.2024.
@@ -41,7 +41,7 @@ DOC = """ЭПИКРИЗ
 
 class ExtractionContracts(unittest.TestCase):
     def test_explicit_negation_initial_exam_and_first_lab(self):
-        extraction = Pipeline(Settings(llm_enabled=False)).process(DOC, citations=True)
+        extraction = DocumentProcessor(Settings(llm_enabled=False)).process(DOC, citations=True)
         result = extraction.result
         validate_result(result)
         self.assertEqual(sum(map(len, result.values())), 50)
@@ -55,7 +55,7 @@ class ExtractionContracts(unittest.TestCase):
 
     def test_evidence_offsets_survive_unicode_and_units(self):
         raw = "🫀\r\n" + DOC.replace("7,0 ×10⁹/л", "7,0\u00a0×10⁹/л")
-        extraction = Pipeline(Settings(llm_enabled=False)).process(raw, citations=True)
+        extraction = DocumentProcessor(Settings(llm_enabled=False)).process(raw, citations=True)
         citations = browser_citations(raw, extraction.evidence)
         self.assertIn("leucocytes", citations)
         encoded = raw.encode("utf-16-le")
@@ -71,7 +71,7 @@ class ExtractionContracts(unittest.TestCase):
         self.assertFalse(extraction.evidence["диагноз"]["copd"]["verified"])
 
     def test_no_cag_means_no_vessel_codes(self):
-        result = Pipeline(Settings(llm_enabled=False)).process("КАГ не выполнена.").result
+        result = DocumentProcessor(Settings(llm_enabled=False)).process("КАГ не выполнена.").result
         self.assertEqual(
             result["коронарография"],
             {"ca_fact": "N", "ca_date": "не указано", "ca_lad": "не указано", "rca": "не указано"},
@@ -85,7 +85,7 @@ class ExtractionContracts(unittest.TestCase):
 
     def test_missing_model_does_not_silently_disable_llm(self):
         with self.assertRaises(RuntimeError):
-            Pipeline(Settings(model_path="missing-model.gguf")).process(DOC)
+            DocumentProcessor(Settings(model_path="missing-model.gguf")).process(DOC)
 
     def test_llm_enforces_requested_keys(self):
         model = LocalModel(Settings())
@@ -101,20 +101,20 @@ class ExtractionContracts(unittest.TestCase):
         self.assertEqual(schema["properties"]["hf"]["type"], "string")
 
     def test_citation_failure_preserves_fields_and_reports_warning(self):
-        pipeline = Pipeline(Settings(llm_enabled=False))
-        pipeline.model = Mock()
-        pipeline.model.review.return_value = {}
-        pipeline.model.locate_evidence.side_effect = RuntimeError("citation service failed")
-        result = pipeline.process(DOC, citations=True)
+        processor = DocumentProcessor(Settings(llm_enabled=False))
+        processor.model = Mock()
+        processor.model.review.return_value = {}
+        processor.model.locate_evidence.side_effect = RuntimeError("citation service failed")
+        result = processor.process(DOC, citations=True)
         validate_result(result.result)
         self.assertTrue(result.evidence["осмотр при поступлении"]["bp"]["verified"])
         self.assertTrue(any("citation service failed" in w for w in result.report["warnings"]))
 
     def test_model_cannot_put_statin_into_ace_field(self):
-        pipeline = Pipeline(Settings(llm_enabled=False))
-        pipeline.model = Mock()
-        pipeline.model.review.return_value = {"ace_ing_sartan": "Аторвастатин 80 мг вечером"}
-        result = pipeline.process(DOC)
+        processor = DocumentProcessor(Settings(llm_enabled=False))
+        processor.model = Mock()
+        processor.model.review.return_value = {"ace_ing_sartan": "Аторвастатин 80 мг вечером"}
+        result = processor.process(DOC)
         self.assertEqual(result.result["медикаментозная терапия"]["ace_ing_sartan"], "не указано")
         self.assertTrue(any("другого класса" in w for w in result.report["warnings"]))
 
@@ -129,6 +129,7 @@ class ApiContracts(unittest.TestCase):
         self.client = self.app.test_client()
 
     def tearDown(self):
+        self.app.extensions["jobs"].shutdown()
         self.env.stop()
         self.temp.cleanup()
 
@@ -147,7 +148,7 @@ class ApiContracts(unittest.TestCase):
     def test_upload_process_evidence_exports_delete_and_session_isolation(self):
         page = self.client.get("/")
         self.assertEqual(page.status_code, 200)
-        self.assertIn(b"/static/files.js", page.data)
+        self.assertIn(b'type="module" src="/static/app.js"', page.data)
         self.assertEqual(self.upload().status_code, 200)
         self.assertEqual(self.app.test_client().get("/files").get_json()["files"], [])
         self.assertEqual(self.client.post("/process").status_code, 202)
@@ -209,15 +210,15 @@ class ApiContracts(unittest.TestCase):
     def test_busy_job_blocks_mutations_and_does_not_duplicate(self):
         self.upload()
         entered, release = Event(), Event()
-        original = Pipeline.process
+        original = DocumentProcessor.process
 
-        def delayed(pipeline, raw, **kwargs):
+        def delayed(processor, raw, **kwargs):
             entered.set()
             if not release.wait(5):
                 raise RuntimeError("test timeout")
-            return original(pipeline, raw, **kwargs)
+            return original(processor, raw, **kwargs)
 
-        with patch.object(Pipeline, "process", delayed):
+        with patch.object(DocumentProcessor, "process", delayed):
             try:
                 started = self.client.post("/process").get_json()
                 self.assertTrue(entered.wait(2))
@@ -231,17 +232,17 @@ class ApiContracts(unittest.TestCase):
     def test_document_failure_does_not_abort_other_documents(self):
         self.upload("failed.md")
         self.upload("ok.md")
-        original = Pipeline.process
+        original = DocumentProcessor.process
         calls = 0
 
-        def one_failure(pipeline, raw, **kwargs):
+        def one_failure(processor, raw, **kwargs):
             nonlocal calls
             calls += 1
             if calls == 1:
                 raise ValueError("test document error")
-            return original(pipeline, raw, **kwargs)
+            return original(processor, raw, **kwargs)
 
-        with patch.object(Pipeline, "process", one_failure):
+        with patch.object(DocumentProcessor, "process", one_failure):
             self.client.post("/process")
             state = self.wait()
         self.assertEqual(state["succeeded"], 1)
@@ -260,7 +261,7 @@ class CliContracts(unittest.TestCase):
             (docs / "one.md").write_text(DOC)
             metrics = root / "metrics.json"
             args = [
-                "pipeline.py",
+                "process_documents.py",
                 "--regex-only",
                 "--input",
                 str(docs),
@@ -271,7 +272,7 @@ class CliContracts(unittest.TestCase):
             ]
             with (
                 patch.object(sys, "argv", args),
-                patch.object(Pipeline, "process", side_effect=KeyboardInterrupt),
+                patch.object(DocumentProcessor, "process", side_effect=KeyboardInterrupt),
             ):
                 self.assertEqual(technical_cli.main(), 130)
             report = json.loads(metrics.read_text())
@@ -294,7 +295,7 @@ class CliContracts(unittest.TestCase):
             run = subprocess.run(
                 [
                     sys.executable,
-                    str(ROOT / "pipeline.py"),
+                    str(ROOT / "process_documents.py"),
                     "--regex-only",
                     "--input",
                     str(docs),

@@ -6,4 +6,4 @@ line-length = 100
 select = ["E4", "E7", "E9", "F", "I", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
-"extraction/regex/engine.py" = ["F401"] # Импорты регистрируют обработчики полей.
+"epicrises/processing/rules/engine.py" = ["F401"] # Импорты регистрируют обработчики полей.

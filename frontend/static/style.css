@@ -202,7 +202,11 @@ h1::after {
     background: var(--azure-tint);
     box-shadow: inset 3px 0 0 var(--azure);        
 }
-#file-list .name { flex: 1; cursor: pointer; overflow-wrap: anywhere; }
+#file-list .name {
+    flex: 1; cursor: pointer; overflow-wrap: anywhere;
+    border: none; padding: 0; background: none;
+    color: inherit; font: inherit; text-align: left;
+}
 #file-list li.processed .name::after { content: " ✓"; color: var(--azure-dark); font-weight: 700; }
 
 #file-list .remove {
