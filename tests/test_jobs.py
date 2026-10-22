@@ -7,13 +7,13 @@ from threading import Event
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from backend.jobs import Jobs
-from backend.storage import Storage
-from domain.schema import GROUPS, NA
-from extraction.pipeline import Extraction
+from epicrises.documents.document_store import DocumentStore
+from epicrises.processing import Extraction
+from epicrises.processing.job_queue import JobQueue
+from epicrises.shared.field_schema import GROUPS, NA
 
 
-class RecordingPipeline:
+class RecordingProcessor:
     model = None
 
     def __init__(self):
@@ -36,12 +36,12 @@ class JobContracts(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.storage = Storage(Path(self.temp.name))
-        self.pipeline = RecordingPipeline()
-        self.jobs = self.new_jobs(self.pipeline)
+        self.storage = DocumentStore(Path(self.temp.name))
+        self.processor = RecordingProcessor()
+        self.jobs = self.new_jobs(self.processor)
 
-    def new_jobs(self, pipeline):
-        jobs = Jobs(pipeline)
+    def new_jobs(self, processor):
+        jobs = JobQueue(processor)
         self.addCleanup(jobs.shutdown)
         return jobs
 
@@ -78,7 +78,7 @@ class JobContracts(unittest.TestCase):
         self.upload("second.md", "второй")
         state = self.run_batch()
 
-        self.assertEqual(self.pipeline.calls, ["первый", "второй"])
+        self.assertEqual(self.processor.calls, ["первый", "второй"])
         self.assertEqual(state["total"], 1)
         self.assertEqual(state["skipped"], 1)
         self.assertEqual(state["completed"], 1)
@@ -91,16 +91,16 @@ class JobContracts(unittest.TestCase):
     def test_retry_only_processes_failed_documents(self):
         self.upload("first.md", "первый")
         self.upload("second.md", "второй")
-        self.pipeline.failures.add("первый")
+        self.processor.failures.add("первый")
         failed = self.run_batch()
         self.assertEqual(failed["succeeded"], 1)
         self.assertEqual(
             failed["errors"], [{"file": "first.md", "error": "Ошибка документа: первый"}]
         )
 
-        self.pipeline.failures.clear()
+        self.processor.failures.clear()
         retried = self.run_batch()
-        self.assertEqual(self.pipeline.calls, ["первый", "второй", "первый"])
+        self.assertEqual(self.processor.calls, ["первый", "второй", "первый"])
         self.assertEqual(retried["total"], 1)
         self.assertEqual(retried["skipped"], 1)
         self.assertEqual(retried["errors"], [])
@@ -111,7 +111,7 @@ class JobContracts(unittest.TestCase):
         self.run_batch()
         report = self.storage.root / "batch-report.json"
         original = (report.read_bytes(), report.stat().st_mtime_ns)
-        self.pipeline.prepare.side_effect = RuntimeError("Модель недоступна")
+        self.processor.prepare.side_effect = RuntimeError("Модель недоступна")
 
         state = self.jobs.start("session", self.storage)
 
@@ -123,15 +123,15 @@ class JobContracts(unittest.TestCase):
         self.assertEqual(state["seconds"], 0)
         self.assertIsNone(state["first"])
         self.assertIsNone(state["current"])
-        self.assertEqual(self.pipeline.calls, ["первый"])
-        self.pipeline.prepare.assert_called_once()
+        self.assertEqual(self.processor.calls, ["первый"])
+        self.processor.prepare.assert_called_once()
         self.assertEqual((report.read_bytes(), report.stat().st_mtime_ns), original)
 
     def test_empty_storage_is_rejected_before_model_preparation(self):
-        self.pipeline.prepare.side_effect = RuntimeError("Модель недоступна")
+        self.processor.prepare.side_effect = RuntimeError("Модель недоступна")
         with self.assertRaisesRegex(ValueError, "Загрузите документы"):
             self.jobs.start("session", self.storage)
-        self.pipeline.prepare.assert_not_called()
+        self.processor.prepare.assert_not_called()
         self.assertEqual(
             self.jobs.status("session"), {"status": "idle", "errors": [], "warnings": []}
         )
@@ -142,19 +142,19 @@ class JobContracts(unittest.TestCase):
         self.jobs.shutdown()
         self.upload("second.md", "второй")
 
-        pipeline = RecordingPipeline()
-        restarted = self.new_jobs(pipeline)
-        restarted.start("session", Storage(self.storage.root))
+        processor = RecordingProcessor()
+        restarted = self.new_jobs(processor)
+        restarted.start("session", DocumentStore(self.storage.root))
         state = self.wait(restarted)
 
         self.assertEqual(state["status"], "done", state)
-        self.assertEqual(pipeline.calls, ["второй"])
+        self.assertEqual(processor.calls, ["второй"])
         self.assertEqual(state["skipped"], 1)
 
     def test_status_does_not_expose_mutable_nested_state(self):
         self.upload("first.md", "первый")
         self.upload("second.md", "второй")
-        self.pipeline.failures.add("второй")
+        self.processor.failures.add("второй")
         state = self.run_batch()
         state["warnings"][0]["messages"].append("внешнее изменение")
         state["errors"][0]["error"] = "внешнее изменение"
@@ -166,7 +166,7 @@ class JobContracts(unittest.TestCase):
     def test_running_job_is_reused_and_cannot_be_reset(self):
         self.upload("first.md", "первый")
         entered, release = Event(), Event()
-        original = self.pipeline.process
+        original = self.processor.process
 
         def delayed(raw, *, citations):
             entered.set()
@@ -174,7 +174,7 @@ class JobContracts(unittest.TestCase):
                 raise RuntimeError("test timeout")
             return original(raw, citations=citations)
 
-        with patch.object(self.pipeline, "process", delayed):
+        with patch.object(self.processor, "process", delayed):
             try:
                 first = self.jobs.start("session", self.storage)
                 self.assertTrue(entered.wait(2))
@@ -187,7 +187,7 @@ class JobContracts(unittest.TestCase):
             finally:
                 release.set()
                 self.wait()
-        self.assertEqual(self.pipeline.calls, ["первый"])
+        self.assertEqual(self.processor.calls, ["первый"])
 
     def test_reset_clears_progress_but_keeps_results(self):
         self.upload("first.md", "первый")
@@ -210,7 +210,7 @@ class JobContracts(unittest.TestCase):
 
         state = self.run_batch()
         self.assertEqual(state["succeeded"], 1)
-        self.assertEqual(self.pipeline.calls, ["первый"])
+        self.assertEqual(self.processor.calls, ["первый"])
 
     def test_shutdown_waits_for_results(self):
         self.upload("first.md", "первый")

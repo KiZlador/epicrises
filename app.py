@@ -3,8 +3,8 @@ import os
 from dotenv import load_dotenv
 from waitress import serve
 
-from backend.app import create_app
-from domain.config import ROOT
+from epicrises.shared.settings import ROOT
+from epicrises.web import create_app
 
 
 def main():

@@ -2,11 +2,11 @@
 
 import argparse
 
-from cli.citations import add_evidence
-from cli.config import add_model_arguments, model_settings
-from domain.config import resolve_path
-from domain.files import documents
-from extraction.llm import LocalModel
+from cli.arguments import add_model_arguments, model_settings
+from cli.citation_writer import add_evidence
+from epicrises.processing.inference.local_model import LocalModel
+from epicrises.shared.file_io import documents
+from epicrises.shared.settings import resolve_path
 
 
 def main() -> int:

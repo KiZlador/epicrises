@@ -5,6 +5,27 @@
 а локальная LLM уточняет их. Результаты можно просматривать вместе с цитатами и выгружать
 в JSON, ZIP или XLSX.
 
+## Устройство проекта
+
+Основной код собран в одном пакете `epicrises` по этапам работы:
+
+```text
+epicrises/
+├── documents/    приём, проверка и хранение документов
+├── processing/   очередь → правила → анализ → LLM → цитаты
+├── exporting/    подготовка JSON, ZIP и XLSX
+├── web/          сборка приложения, сессии и HTTP API
+└── shared/       настройки, схема 50 полей и файловые операции
+```
+
+Это модули одного приложения. `DocumentService` управляет документами,
+`JobQueue` запускает обработку через `DocumentProcessor`, `ExportService` получает
+снимок готовых результатов и создаёт файл. `web` связывает эти операции с HTTP;
+`frontend/` содержит интерфейс, `cli/` — консольные сценарии.
+
+Веб и CLI используют один `DocumentProcessor` из `processing/processor.py`.
+Подробная карта и места для изменений: [модули](docs/modules.md).
+
 ## Запуск
 
 Нужен Python 3.10 или новее. Фронтенд использует ES modules и не требует сборки.
@@ -81,9 +102,9 @@ MODEL_PATH=models/qwen2.5-3b-instruct-q4_k_m.gguf
 Обработка каталога без цитат:
 
 ```bash
-python pipeline.py --input test_docs --output test_json --metrics reports/benchmark.json
-python pipeline.py --regex-only
-python pipeline.py --model /path/to/model.gguf
+python process_documents.py --input test_docs --output test_json --metrics reports/benchmark.json
+python process_documents.py --regex-only
+python process_documents.py --model /path/to/model.gguf
 ```
 
 CLI обрабатывает все `.md` указанного каталога без рекурсивного обхода и пересчитывает
@@ -99,7 +120,11 @@ python add_citations.py --input test_docs --results test_json --regex-only
 ```
 
 Коды завершения: `0` — успех, `1` — ошибки отдельных документов, `2` — ошибка запуска.
-Команда `pipeline.py` при Ctrl+C сохраняет промежуточный отчёт и возвращает `130`.
+Команда `process_documents.py` при Ctrl+C сохраняет промежуточный отчёт и возвращает `130`.
+
+Прежняя команда `pipeline.py` переименована в `process_documents.py`: обновите её имя
+в скриптах запуска. Аргументы, форматы результатов и коды завершения сохранены.
+`app.py` и `add_citations.py` запускаются как прежде.
 
 `reports/benchmark.json` содержит время всей партии и каждого этапа, количество попыток,
 успехов, ошибок и оставшихся документов, изменения полей и сводную статистику.

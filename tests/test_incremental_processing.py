@@ -5,9 +5,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from backend.app import create_app
-from domain.config import Settings
-from extraction.pipeline import Pipeline
+from epicrises.processing import DocumentProcessor
+from epicrises.shared.settings import Settings
+from epicrises.web import create_app
 
 
 class IncrementalApiContracts(unittest.TestCase):
@@ -15,12 +15,12 @@ class IncrementalApiContracts(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.pipeline = Pipeline(Settings(llm_enabled=False))
-        self.app = self.application(self.pipeline)
+        self.processor = DocumentProcessor(Settings(llm_enabled=False))
+        self.app = self.application(self.processor)
         self.client = self.app.test_client()
 
-    def application(self, pipeline):
-        app = create_app(pipeline=pipeline, data_dir=self.root)
+    def application(self, processor):
+        app = create_app(processor=processor, data_dir=self.root)
         app.testing = True
         self.addCleanup(app.extensions["jobs"].shutdown)
         return app
@@ -41,7 +41,7 @@ class IncrementalApiContracts(unittest.TestCase):
         self.fail("Processing did not finish")
 
     def test_upload_after_completed_batch_processes_only_new_files(self):
-        with patch.object(self.pipeline, "process", wraps=self.pipeline.process) as process:
+        with patch.object(self.processor, "process", wraps=self.processor.process) as process:
             self.upload("first.md")
             self.assertEqual(self.process()["succeeded"], 1)
             original = {
@@ -65,7 +65,7 @@ class IncrementalApiContracts(unittest.TestCase):
     def test_noop_does_not_require_available_model(self):
         self.upload("first.md")
         self.process()
-        with patch.object(self.pipeline, "prepare", side_effect=RuntimeError("model unavailable")):
+        with patch.object(self.processor, "prepare", side_effect=RuntimeError("model unavailable")):
             response = self.client.post("/process")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["status"], "done")
@@ -78,14 +78,14 @@ class IncrementalApiContracts(unittest.TestCase):
         with self.client.session_transaction() as session:
             identifier = session["id"]
         self.app.extensions["jobs"].shutdown()
-        pipeline = Pipeline(Settings(llm_enabled=False))
-        restarted = self.application(pipeline)
+        processor = DocumentProcessor(Settings(llm_enabled=False))
+        restarted = self.application(processor)
         self.assertEqual(self.app.secret_key, restarted.secret_key)
         self.client = restarted.test_client()
         with self.client.session_transaction() as session:
             session["id"] = identifier
         self.upload("second.md")
-        with patch.object(pipeline, "process", wraps=pipeline.process) as process:
+        with patch.object(processor, "process", wraps=processor.process) as process:
             state = self.process()
         self.assertEqual([call.args[0] for call in process.call_args_list], ["second.md"])
         self.assertEqual(state["skipped"], 1)

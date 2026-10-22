@@ -10,10 +10,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import add_citations
-import pipeline
-from cli.citations import add_evidence
-from domain.config import Settings
-from extraction.pipeline import Pipeline
+import process_documents
+from cli.citation_writer import add_evidence
+from epicrises.processing import DocumentProcessor
+from epicrises.shared.settings import Settings
 
 DOC = "Поступил 01.01.2024. Сахарный диабет отрицает. АД 120/80 мм рт. ст."
 
@@ -25,7 +25,7 @@ class CitationCliContracts(unittest.TestCase):
             valid, invalid = root / "valid.md", root / "invalid.md"
             for path in (valid, invalid):
                 path.write_text(DOC, encoding="utf-8")
-            result = Pipeline(Settings(llm_enabled=False)).process(DOC).result
+            result = DocumentProcessor(Settings(llm_enabled=False)).process(DOC).result
             original = json.dumps(result, ensure_ascii=False)
             (root / "valid.json").write_text(original, encoding="utf-8")
             (root / "invalid.json").write_text("{}", encoding="utf-8")
@@ -39,7 +39,7 @@ class CitationCliContracts(unittest.TestCase):
             self.assertTrue(evidence["даты эпизода"]["admission_date"]["verified"])
 
     def test_invalid_environment_is_a_cli_error_in_both_entry_points(self):
-        for entry_point in (pipeline, add_citations):
+        for entry_point in (process_documents, add_citations):
             with (
                 self.subTest(command=entry_point.__name__),
                 patch.object(sys, "argv", [entry_point.__name__, "--regex-only"]),
@@ -53,8 +53,8 @@ class CitationCliContracts(unittest.TestCase):
 
 
 class ExtractionCliContracts(unittest.TestCase):
-    def test_injected_pipeline_only_needs_processing_interface(self):
-        extraction = Pipeline(Settings(llm_enabled=False)).process(DOC)
+    def test_injected_processor_only_needs_processing_interface(self):
+        extraction = DocumentProcessor(Settings(llm_enabled=False)).process(DOC)
         processor = SimpleNamespace(prepare=Mock(), process=Mock(return_value=extraction))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -63,7 +63,7 @@ class ExtractionCliContracts(unittest.TestCase):
             (documents / "case.md").write_text(DOC, encoding="utf-8")
             metrics = root / "metrics.json"
             args = [
-                "pipeline.py",
+                "process_documents.py",
                 "--regex-only",
                 "--input",
                 str(documents),
@@ -74,10 +74,10 @@ class ExtractionCliContracts(unittest.TestCase):
             ]
             with (
                 patch.object(sys, "argv", args),
-                patch.object(pipeline, "Pipeline", return_value=processor),
+                patch.object(process_documents, "DocumentProcessor", return_value=processor),
                 redirect_stdout(io.StringIO()),
             ):
-                self.assertEqual(pipeline.main(), 0)
+                self.assertEqual(process_documents.main(), 0)
             processor.process.assert_called_once_with(DOC)
             report = json.loads(metrics.read_text(encoding="utf-8"))
             self.assertEqual(report["mode"], "regex-statistics")

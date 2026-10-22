@@ -7,18 +7,18 @@ from unittest.mock import patch
 
 from werkzeug.datastructures import FileStorage
 
-from backend.storage import ARTIFACTS, Storage
-from domain.config import Settings
-from domain.files import write_json
-from extraction.pipeline import Pipeline
+from epicrises.documents.document_store import ARTIFACTS, DocumentStore
+from epicrises.processing import DocumentProcessor
+from epicrises.shared.file_io import write_json
+from epicrises.shared.settings import Settings
 
 
 class StorageContracts(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.storage = Storage(Path(self.temp.name))
-        self.extraction = Pipeline(Settings(llm_enabled=False)).process(
+        self.storage = DocumentStore(Path(self.temp.name))
+        self.extraction = DocumentProcessor(Settings(llm_enabled=False)).process(
             "АД 120/80 мм рт. ст. ЧСС 70 в минуту.", citations=True
         )
 
@@ -100,7 +100,7 @@ class StorageContracts(unittest.TestCase):
                 raise OSError("disk full")
             original(path, value)
 
-        with patch("backend.storage.write_json", side_effect=fail_main_result):
+        with patch("epicrises.documents.document_store.write_json", side_effect=fail_main_result):
             with self.assertRaises(OSError):
                 self.storage.save("case.md", self.extraction)
         self.assertFalse(self.storage.is_processed("case.md"))
@@ -129,7 +129,7 @@ class StorageContracts(unittest.TestCase):
             FileStorage(io.BytesIO(b"valid document"), "valid.md"),
             FileStorage(io.BytesIO(data), "docs.zip"),
         ]
-        with patch("backend.uploads.MAX_BATCH_BYTES", len(data) - 1):
+        with patch("epicrises.documents.upload_reader.MAX_BATCH_BYTES", len(data) - 1):
             with self.assertRaisesRegex(ValueError, "Архив превышает"):
                 self.storage.upload(incoming)
         self.assertEqual(self.storage.list(), [{"name": "existing.md", "processed": False}])

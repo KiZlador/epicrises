@@ -4,6 +4,10 @@
 сессии. Документы, прогресс и экспорт доступны только в соответствующей сессии.
 HTTP-клиенту нужно сохранять cookie между запросами.
 
+Маршруты находятся в `epicrises/web/routes.py`. Они обращаются к `DocumentService`,
+`JobQueue` и `ExportService`; перевод внутренних цитат в координаты браузера выполняет
+`web/citation_view.py`. Реорганизация модулей не меняет URL и форматы ответов.
+
 ## Документы
 
 | Метод | Путь | Ответ |
@@ -12,7 +16,7 @@ HTTP-клиенту нужно сохранять cookie между запрос
 | `POST` | `/upload` | `{"accepted": ["case.md"], "skipped": ["readme.txt"]}` |
 | `DELETE` | `/files/<name>` | `{"ok": true}` |
 | `DELETE` | `/files` | `{"files": []}` |
-| `GET` | `/result/<name>` | Структурированные значения по схеме `domain/schema.py` |
+| `GET` | `/result/<name>` | 50 строковых полей по схеме `epicrises/shared/field_schema.py` |
 | `GET` | `/evidence/<name>` | Значения, цитаты и координаты в символах Python |
 | `GET` | `/report/<name>` | Режим, время этапов, анализ, изменения и предупреждения |
 | `GET` | `/source/<name>` | `{"text": "...", "citations": {...}}`, координаты UTF-16 |

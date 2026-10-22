@@ -1,11 +1,12 @@
 import unittest
 from unittest.mock import Mock
 
-from domain.config import Settings
-from domain.schema import NA
-from extraction.llm import LocalModel
-from extraction.regex.core import Hit
-from extraction.review import apply_review, normalize_hits
+from epicrises.processing.inference.local_model import LocalModel
+from epicrises.processing.inference.response_review import apply_review
+from epicrises.processing.processing_types import Hit
+from epicrises.processing.rules.normalization import normalize_hits
+from epicrises.shared.field_schema import NA
+from epicrises.shared.settings import Settings
 
 
 class ReviewContracts(unittest.TestCase):

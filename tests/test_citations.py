@@ -1,9 +1,9 @@
 import unittest
 from unittest.mock import Mock
 
-from domain.config import Settings
-from extraction.citation_candidates import candidate_lines
-from extraction.llm import LocalModel
+from epicrises.processing.citations.candidate_lines import candidate_lines
+from epicrises.processing.inference.local_model import LocalModel
+from epicrises.shared.settings import Settings
 
 TEXT = """Гипертоническая болезнь II стадии.
 Сахарный диабет отрицает.
