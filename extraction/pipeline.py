@@ -1,16 +1,13 @@
-import re
 from dataclasses import dataclass
 from time import perf_counter
 
 from domain.config import Settings
-from domain.schema import NA, RANGES
-from domain.validation import BINARY, valid_value, validate_result
+from domain.validation import validate_result
 
 from .evidence import build_evidence
 from .llm import LocalModel
-from .regex.core import Hit
 from .regex.engine import cross_checks, extract_document, to_result
-from .regex.medication import DRUGS
+from .review import apply_review, normalize_hits
 from .statistics import analyze
 
 
@@ -33,58 +30,16 @@ class Pipeline:
     def process(self, raw: str, *, citations: bool = False) -> Extraction:
         self.prepare()
         started = perf_counter()
-        hits = extract_document(raw)
-        for key, hit in hits.items():
-            if key in RANGES:
-                hit.value = str(hit.value).replace(",", ".")
-            if not valid_value(key, hit.value):
-                replacement = (
-                    "0"
-                    if key in BINARY
-                    else {"type_acs": "NA", "mi_localisation": "N", "ca_fact": "N"}.get(key, NA)
-                )
-                hits[key] = Hit(
-                    replacement,
-                    "",
-                    "invalid-regex-value",
-                    "low",
-                    hit.warn + ["Значение не соответствует формату поля"],
-                )
+        hits = normalize_hits(extract_document(raw))
         regex_end = perf_counter()
         analysis = analyze(hits)
         stats_end = perf_counter()
-        final = {
-            key: Hit(hit.value, hit.ev, hit.method, hit.conf, list(hit.warn))
-            for key, hit in hits.items()
-        }
-        changes, warnings = {}, []
+        fields, answer = [], {}
         if self.model:
             flat = {key: hit.value for key, hit in hits.items()}
             fields = analysis["review_fields"]
             answer = self.model.review(raw, fields, flat, analysis)
-            for key in fields:
-                value = answer.get(key)
-                if isinstance(value, str):
-                    value = value.strip()
-                    if key in RANGES:
-                        value = value.replace(",", ".")
-                if not valid_value(key, value):
-                    warnings.append(
-                        f"{key}: модель не вернула допустимое значение; сохранён результат правил"
-                    )
-                    continue
-                if key in DRUGS and value != NA:
-                    classes = {
-                        name for name, pattern in DRUGS.items() if re.search(pattern, value, re.I)
-                    }
-                    if classes and key not in classes:
-                        warnings.append(
-                            f"{key}: модель указала препарат другого класса; сохранён результат правил"
-                        )
-                        continue
-                if value != hits[key].value:
-                    changes[key] = {"before": hits[key].value, "after": value}
-                    final[key] = Hit(value, "", "llm", "unverified")
+        final, changes, warnings = apply_review(hits, answer, fields)
         cross_checks(final)
         result = to_result(final)
         validate_result(result)

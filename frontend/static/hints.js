@@ -1,7 +1,6 @@
-(function () {
+export function createHints(features) {
     let hints = {};
-    const ready = fetch("/static/features.json")
-        .then((r) => (r.ok ? r.json() : {}))
+    const ready = features
         .then((data) => { hints = data; })
         .catch(() => {});
 
@@ -39,7 +38,7 @@
     }
 
     function hide() { tip.hidden = true; }
-    window.attachHint = function (element, key) {
+    function attach(element, key) {
         ready.then(() => {
             if (!hints[key]) return;
             element.classList.add("has-hint");
@@ -47,7 +46,7 @@
             element.addEventListener("mousemove", (e) => { if (!tip.hidden) move(e); });
             element.addEventListener("mouseleave", hide);
         });
-    };
-    window.hideHint = hide;
+    }
     document.addEventListener("scroll", hide, true);
-})();
+    return { attach, hide };
+}

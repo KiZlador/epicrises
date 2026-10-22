@@ -22,7 +22,7 @@
     <input type="file" id="file-input" accept=".md,.zip" multiple hidden>
 
     <div class="upload-row">
-        <button class="btn btn-primary" id="upload-btn">
+        <button class="btn btn-primary" id="upload-btn" disabled>
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M5 3h11l3 3v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"
                   fill="none" stroke="currentColor" stroke-width="2"
@@ -40,22 +40,23 @@
 
 
     <p id="process-status" role="status" aria-live="polite" hidden></p>
+    <button class="btn btn-dark" id="sync-btn" hidden>Проверить состояние</button>
     <div class="workspace">
         <div class="left">
             <div class="toolbar">
-                <button class="btn btn-dark" id="clear-btn">
+                <button class="btn btn-dark" id="clear-btn" disabled>
                   <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor"
                           stroke-width="2" stroke-linecap="round"/>
                   </svg>
                   Удалить всё
                 </button>
-                <button class="btn btn-primary" id="process-btn">
+                <button class="btn btn-primary" id="process-btn" disabled>
                   <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M5 12l4 4L19 6" fill="none" stroke="currentColor"
                           stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
-                  Обработать
+                  <span id="process-label">Обработать</span>
                 </button>
             </div>
             <ul id="file-list"></ul>
@@ -108,10 +109,6 @@
         </div>
     </div>
 
-    <script src="{{ static_url('upload.js') }}"></script>
-    <script src="{{ static_url('hints.js') }}"></script>
-    <script src="{{ static_url('source.js') }}"></script>
-    <script src="{{ static_url('files.js') }}"></script>
-    <script src="{{ static_url('save.js') }}"></script>
+    <script type="module" src="{{ static_url('app.js') }}"></script>
 </body>
 </html>

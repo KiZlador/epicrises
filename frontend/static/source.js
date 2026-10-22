@@ -1,10 +1,10 @@
-(function () {
+export function createSourceView(onPinned) {
     const view = document.getElementById("source-view");
     const title = document.getElementById("source-title");
 
     let text = "";
-    let citations = {}; // {признак: {start, end}}
-    let pinnedKey = null; // какой признак сейчас закреплён
+    let citations = {};
+    let pinnedKey = null;
     function render(range, pinned) {
         if (!range) {
             view.textContent = text;
@@ -34,7 +34,7 @@
         }
     }
 
-    window.sourceView = {
+    return {
         show(name, sourceText, sourceCitations) {
             text = sourceText;
             citations = sourceCitations || {};
@@ -53,7 +53,7 @@
         },
 
         highlight(key) {
-            if (pinnedKey) return; // не перебиваем закреплённую
+            if (pinnedKey) return;
             const range = citations[key];
             if (!range) return;
             const mark = render(range, false);
@@ -61,14 +61,14 @@
         },
 
         unhighlight() {
-            if (pinnedKey) return; // закреплённую не трогаем
+            if (pinnedKey) return;
             render(null);
         },
         pin(key) {
             if (pinnedKey === key) {
                 pinnedKey = null;
                 render(null);
-                document.dispatchEvent(new CustomEvent("source:pinned", { detail: { key: null } }));
+                onPinned(null);
                 return;
             }
             const range = citations[key];
@@ -76,8 +76,8 @@
             pinnedKey = key;
             const mark = render(range, true);
             if (mark) scrollToMark(mark);
-            document.dispatchEvent(new CustomEvent("source:pinned", { detail: { key } }));
+            onPinned(key);
         },
 
     };
-})();
+}

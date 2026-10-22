@@ -1,13 +1,14 @@
+"""Session-scoped documents and committed extraction results."""
+
 import json
-import re
-import zipfile
 from pathlib import Path
 
 from domain.files import read_document, write_json
+from domain.validation import validate_result
 
-MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
-MAX_BATCH_BYTES = 64 * 1024 * 1024
-MAX_DOCUMENTS = 1000
+from .uploads import read_uploads
+
+ARTIFACTS = {".json": "result.json", ".ev.json": "evidence.json", ".report.json": "report.json"}
 
 
 class Storage:
@@ -30,25 +31,81 @@ class Storage:
         return self.uploads / name
 
     def result_path(self, name: str, suffix=".json") -> Path:
+        return self.results / self.document(name).name / ARTIFACTS[suffix]
+
+    def _legacy_path(self, name: str, suffix: str) -> Path:
         return self.results / (self.document(name).stem + suffix)
+
+    def _legacy_complete(self, name: str) -> bool:
+        """Accept complete old bundles, excluding sidecars that resemble a result."""
+        paths = [self._legacy_path(name, suffix) for suffix in ARTIFACTS]
+        if not all(path.is_file() for path in paths):
+            return False
+        try:
+            result = json.loads(paths[0].read_text(encoding="utf-8"))
+            validate_result(result)
+            evidence = json.loads(paths[1].read_text(encoding="utf-8"))
+            report = json.loads(paths[2].read_text(encoding="utf-8"))
+            if not isinstance(report, dict) or not {
+                "mode",
+                "seconds",
+                "analysis",
+                "changes",
+                "warnings",
+            }.issubset(report):
+                return False
+            return all(
+                evidence[group][key]["value"] == value
+                for group, fields in result.items()
+                for key, value in fields.items()
+            )
+        except (OSError, UnicodeError, ValueError, KeyError, TypeError, AttributeError):
+            return False
+
+    def is_processed(self, name: str) -> bool:
+        if self.result_path(name).parent.exists():
+            return all(self.result_path(name, suffix).is_file() for suffix in ARTIFACTS)
+        return self._legacy_complete(name)
 
     def list(self):
         return [
-            {"name": path.name, "processed": self.result_path(path.name).is_file()}
-            for path in sorted(self.uploads.glob("*.md"), key=lambda p: p.name.casefold())
+            {"name": path.name, "processed": self.is_processed(path.name)}
+            for path in sorted(self.uploads.glob("*.md"), key=lambda path: path.name.casefold())
+            if path.is_file()
         ]
 
     def read_result(self, name: str, suffix=".json"):
-        return json.loads(self.result_path(name, suffix).read_text(encoding="utf-8"))
+        if not self.document(name).is_file() or not self.is_processed(name):
+            raise FileNotFoundError(name)
+        path = self.result_path(name, suffix)
+        if not path.is_file():
+            path = self._legacy_path(name, suffix)
+        return json.loads(path.read_text(encoding="utf-8"))
 
     def raw(self, name: str):
         return read_document(self.document(name))
 
     def discard_result(self, name: str):
-        for suffix in (".json", ".ev.json", ".report.json"):
+        # Old flat filenames can be shared by two document names. Keep shared
+        # paths until the other document is deleted, even for incomplete bundles.
+        protected = {
+            self._legacy_path(path.name, suffix)
+            for path in self.uploads.glob("*.md")
+            if path.is_file() and path.name != name
+            for suffix in ARTIFACTS
+        }
+        for suffix in ARTIFACTS:
+            path = self._legacy_path(name, suffix)
+            if path not in protected:
+                path.unlink(missing_ok=True)
+        for suffix in ARTIFACTS:
             self.result_path(name, suffix).unlink(missing_ok=True)
+        directory = self.result_path(name).parent
+        if directory.is_dir() and not any(directory.iterdir()):
+            directory.rmdir()
 
     def save(self, name: str, extraction):
+        # The main result commits the bundle only after both sidecars have been written.
         write_json(self.result_path(name, ".ev.json"), extraction.evidence or {})
         write_json(self.result_path(name, ".report.json"), extraction.report)
         write_json(self.result_path(name), extraction.result)
@@ -59,63 +116,17 @@ class Storage:
         (self.root / "batch-report.json").unlink(missing_ok=True)
 
     def upload(self, incoming):
-        accepted, skipped, pending = [], [], []
-        total = 0
-
-        def stage(name, data):
-            nonlocal total
-            if not name.lower().endswith(".md"):
-                skipped.append(name)
-                return
-            if len(data) > MAX_DOCUMENT_BYTES:
-                raise ValueError(f"Документ превышает 2 МиБ: {name}")
-            try:
-                text = data.decode("utf-8-sig")
-            except UnicodeDecodeError as exc:
-                raise ValueError(f"Документ должен быть в UTF-8: {name}") from exc
-            if not text.strip() or "\x00" in text:
-                raise ValueError(f"Пустой или недопустимый текст: {name}")
-            total += len(data)
-            if total > MAX_BATCH_BYTES or len(pending) + len(self.list()) >= MAX_DOCUMENTS:
-                raise ValueError("Превышен лимит: 64 МиБ за загрузку или 1000 документов в сессии")
-            pending.append((name, text))
-
-        for uploaded in incoming:
-            name = uploaded.filename or ""
-            if name.lower().endswith(".zip"):
-                try:
-                    with zipfile.ZipFile(uploaded.stream) as archive:
-                        entries = archive.infolist()
-                        if len(entries) > 5000:
-                            raise ValueError("Слишком много записей в архиве")
-                        for entry in entries:
-                            if entry.is_dir() or "__MACOSX" in entry.filename.split("/"):
-                                continue
-                            if not entry.filename.lower().endswith(".md"):
-                                skipped.append(entry.filename)
-                                continue
-                            if entry.file_size > MAX_DOCUMENT_BYTES:
-                                raise ValueError(f"Документ превышает 2 МиБ: {entry.filename}")
-                            with archive.open(entry) as stream:
-                                stage(entry.filename, stream.read(MAX_DOCUMENT_BYTES + 1))
-                except (zipfile.BadZipFile, RuntimeError, NotImplementedError) as exc:
-                    raise ValueError(
-                        "Повреждённый, зашифрованный или неподдерживаемый ZIP"
-                    ) from exc
-            else:
-                stage(name, uploaded.stream.read(MAX_DOCUMENT_BYTES + 1))
-        used = {Path(item["name"]).stem.casefold() for item in self.list()}
-        for name, text in pending:
-            basename = name.replace("\\", "/").rsplit("/", 1)[-1]
-            stem = re.sub(r"[^\w .()\-]", "_", Path(basename).stem).strip(" .")[:100] or "document"
-            candidate, index = stem, 1
-            while candidate.casefold() in used:
-                candidate = f"{stem}_{index}"
-                index += 1
-            used.add(candidate.casefold())
-            filename = candidate + ".md"
-            self.document(filename).write_bytes(text.encode("utf-8"))
-            accepted.append(filename)
+        batch = read_uploads(incoming, [item["name"] for item in self.list()])
+        accepted = []
+        try:
+            for document in batch.documents:
+                path = self.document(document.name)
+                accepted.append(document.name)
+                path.write_bytes(document.text.encode("utf-8"))
+        except OSError:
+            for name in accepted:
+                self.document(name).unlink(missing_ok=True)
+            raise
         if accepted:
             (self.root / "batch-report.json").unlink(missing_ok=True)
-        return {"accepted": accepted, "skipped": skipped}
+        return {"accepted": accepted, "skipped": batch.skipped}

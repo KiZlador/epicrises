@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EXCLUDED_DIRECTORIES = {".venv", ".git", ".ruff_cache", "__pycache__", "runtime", "node_modules"}
-EXCLUDED_FILES = {".env", ".DS_Store"}
+EXCLUDED_FILES = {".env", ".DS_Store", "cookies.txt"}
 
 
 def main():

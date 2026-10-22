@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from threading import RLock
 from time import perf_counter
 from uuid import uuid4
@@ -8,6 +9,8 @@ from extraction.statistics import summarize
 
 
 class Jobs:
+    """Одна очередь для общей модели; состояние задач хранится до перезапуска."""
+
     def __init__(self, pipeline):
         self.pipeline = pipeline
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="extraction")
@@ -15,39 +18,61 @@ class Jobs:
         self.states = {}
 
     def busy(self, session_id):
-        return self.states.get(session_id, {}).get("status") in {"queued", "running"}
+        with self.lock:
+            return self.states.get(session_id, {}).get("status") in {"queued", "running"}
+
+    def reset(self, session_id):
+        """Сбрасывает прогресс после изменения документов, сохраняя результаты."""
+        with self.lock:
+            if self.busy(session_id):
+                raise RuntimeError("Дождитесь завершения обработки")
+            self.states.pop(session_id, None)
 
     def start(self, session_id, storage):
         with self.lock:
             if self.busy(session_id):
-                return dict(self.states[session_id])
-            self.pipeline.prepare()
-            names = [item["name"] for item in storage.list()]
-            if not names:
+                return self.status(session_id)
+
+            documents = storage.list()
+            if not documents:
                 raise ValueError("Загрузите документы перед обработкой")
+            names = [item["name"] for item in documents if not item["processed"]]
+            if names:
+                self.pipeline.prepare()
+
             state = {
                 "id": uuid4().hex,
-                "status": "queued",
+                "status": "queued" if names else "done",
                 "total": len(names),
+                "skipped": len(documents) - len(names),
                 "completed": 0,
                 "succeeded": 0,
                 "errors": [],
                 "warnings": [],
                 "first": None,
+                "current": None,
                 "mode": "regex-statistics-llm" if self.pipeline.model else "regex-statistics",
             }
             self.states[session_id] = state
-            self.executor.submit(self._run, session_id, storage, names)
-            return dict(state)
+            if not names:
+                state["seconds"] = 0
+                return self.status(session_id)
+
+            try:
+                self.executor.submit(self._run, session_id, storage, names)
+            except Exception as exc:
+                state.update(status="failed", error=str(exc))
+                raise RuntimeError(f"Не удалось запустить обработку: {exc}") from exc
+            return self.status(session_id)
 
     def status(self, session_id):
         with self.lock:
-            state = self.states.get(session_id, {"status": "idle"})
-            return {
-                **state,
-                "errors": list(state.get("errors", [])),
-                "warnings": list(state.get("warnings", [])),
-            }
+            state = self.states.get(session_id, {"status": "idle", "errors": [], "warnings": []})
+            return deepcopy(state)
+
+    def shutdown(self, wait=True):
+        """Завершает очередь; при wait=True ждёт сохранения результатов."""
+        self.executor.shutdown(wait=wait)
 
     def _run(self, session_id, storage, names):
         started = perf_counter()
@@ -68,7 +93,7 @@ class Jobs:
                         state["first"] = state["first"] or name
                         if extraction.report["warnings"]:
                             state["warnings"].append(
-                                {"file": name, "messages": extraction.report["warnings"]}
+                                {"file": name, "messages": list(extraction.report["warnings"])}
                             )
                     results.append(extraction.result)
                     records.append({"file": name, **extraction.report})
@@ -79,6 +104,7 @@ class Jobs:
                 finally:
                     with self.lock:
                         state["completed"] += 1
+
             elapsed = perf_counter() - started
             write_json(
                 storage.root / "batch-report.json",

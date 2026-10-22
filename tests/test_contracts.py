@@ -129,6 +129,7 @@ class ApiContracts(unittest.TestCase):
         self.client = self.app.test_client()
 
     def tearDown(self):
+        self.app.extensions["jobs"].shutdown()
         self.env.stop()
         self.temp.cleanup()
 
@@ -147,7 +148,7 @@ class ApiContracts(unittest.TestCase):
     def test_upload_process_evidence_exports_delete_and_session_isolation(self):
         page = self.client.get("/")
         self.assertEqual(page.status_code, 200)
-        self.assertIn(b"/static/files.js", page.data)
+        self.assertIn(b'type="module" src="/static/app.js"', page.data)
         self.assertEqual(self.upload().status_code, 200)
         self.assertEqual(self.app.test_client().get("/files").get_json()["files"], [])
         self.assertEqual(self.client.post("/process").status_code, 202)
