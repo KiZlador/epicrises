@@ -3,6 +3,7 @@
 import re
 import zipfile
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 
 MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
@@ -63,8 +64,11 @@ def read_uploads(incoming, existing_names: list[str]) -> UploadBatch:
         if not name.lower().endswith(".zip"):
             stage(name, uploaded.stream.read(MAX_DOCUMENT_BYTES + 1))
             continue
+        data = uploaded.stream.read(MAX_BATCH_BYTES + 1)
+        if len(data) > MAX_BATCH_BYTES:
+            raise ValueError("Архив превышает 64 МиБ")
         try:
-            with zipfile.ZipFile(uploaded.stream) as archive:
+            with zipfile.ZipFile(BytesIO(data)) as archive:
                 entries = archive.infolist()
                 if len(entries) > MAX_ARCHIVE_ENTRIES:
                     raise ValueError("Слишком много записей в архиве")

@@ -1,6 +1,7 @@
 import io
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -117,6 +118,21 @@ class StorageContracts(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.storage.upload(incoming)
         self.assertEqual(self.storage.list(), [])
+
+    def test_oversized_archive_does_not_save_other_documents_in_request(self):
+        self.upload("existing.md")
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as target:
+            target.writestr("inside.md", "document")
+        data = archive.getvalue()
+        incoming = [
+            FileStorage(io.BytesIO(b"valid document"), "valid.md"),
+            FileStorage(io.BytesIO(data), "docs.zip"),
+        ]
+        with patch("backend.uploads.MAX_BATCH_BYTES", len(data) - 1):
+            with self.assertRaisesRegex(ValueError, "Архив превышает"):
+                self.storage.upload(incoming)
+        self.assertEqual(self.storage.list(), [{"name": "existing.md", "processed": False}])
 
     def test_failed_upload_write_rolls_back_only_new_documents(self):
         self.upload("existing.md")
